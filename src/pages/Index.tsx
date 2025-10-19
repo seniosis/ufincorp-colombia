@@ -5,7 +5,9 @@ import { Dashboard } from "@/components/Dashboard";
 import { TransactionsTable } from "@/components/TransactionsTable";
 import { FileUpload } from "@/components/FileUpload";
 import { FinancialChat } from "@/components/FinancialChat";
+import { CategoryRules } from "@/components/CategoryRules";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LogOut, TrendingUp } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -71,18 +73,32 @@ const Index = () => {
       </header>
 
       {/* Main Content */}
-      <main className="container mx-auto px-4 py-8 space-y-8">
-        {/* Dashboard Metrics */}
-        <Dashboard />
+      <main className="container mx-auto px-4 py-8">
+        <Tabs defaultValue="dashboard" className="space-y-6">
+          <TabsList className="grid w-full grid-cols-4">
+            <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
+            <TabsTrigger value="upload">Importar</TabsTrigger>
+            <TabsTrigger value="rules">Reglas</TabsTrigger>
+            <TabsTrigger value="chat">Chat IA</TabsTrigger>
+          </TabsList>
 
-        {/* Upload and Chat Section */}
-        <div className="grid gap-8 lg:grid-cols-2">
-          <FileUpload />
-          <FinancialChat />
-        </div>
+          <TabsContent value="dashboard" className="space-y-6">
+            <Dashboard />
+            <TransactionsTable />
+          </TabsContent>
 
-        {/* Transactions Table */}
-        <TransactionsTable />
+          <TabsContent value="upload">
+            <FileUpload />
+          </TabsContent>
+
+          <TabsContent value="rules">
+            <CategoryRules />
+          </TabsContent>
+
+          <TabsContent value="chat">
+            <FinancialChat />
+          </TabsContent>
+        </Tabs>
       </main>
     </div>
   );

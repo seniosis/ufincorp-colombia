@@ -1,1 +1,20 @@
 project_id = "jlteeyiwdvlejajnyzok"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "storage", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[functions.process-transactions]
+verify_jwt = true
+
+[functions.financial-query]
+verify_jwt = true
+
+[functions.map-columns]
+verify_jwt = true
+
+[functions.parse-transactions]
+verify_jwt = true

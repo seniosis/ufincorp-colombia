@@ -14,6 +14,42 @@ export type Database = {
   }
   public: {
     Tables: {
+      categorization_rules: {
+        Row: {
+          active: boolean | null
+          categoria: string
+          contrapartida: string | null
+          created_at: string
+          id: string
+          keyword: string
+          priority: number | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          active?: boolean | null
+          categoria: string
+          contrapartida?: string | null
+          created_at?: string
+          id?: string
+          keyword: string
+          priority?: number | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          active?: boolean | null
+          categoria?: string
+          contrapartida?: string | null
+          created_at?: string
+          id?: string
+          keyword?: string
+          priority?: number | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       fx_rates: {
         Row: {
           base_code: string

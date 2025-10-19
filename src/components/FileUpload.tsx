@@ -7,14 +7,25 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Upload, Loader2 } from "lucide-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { TransactionPreview } from "./TransactionPreview";
+
+interface ParsedTransaction {
+  fecha: string;
+  descripcion: string;
+  monto_original: number;
+  moneda: string;
+  tipo: "in" | "out";
+  categoria?: string;
+  contrapartida?: string;
+  referencia?: string;
+}
 
 export const FileUpload = () => {
   const [file, setFile] = useState<File | null>(null);
   const [cuenta, setCuenta] = useState("");
   const [loading, setLoading] = useState(false);
+  const [parsedTransactions, setParsedTransactions] = useState<ParsedTransaction[] | null>(null);
   const { toast } = useToast();
-  const queryClient = useQueryClient();
 
   const cuentas = [
     "WIO_MAIN",
@@ -51,29 +62,38 @@ export const FileUpload = () => {
       // Read file as text
       const text = await file.text();
 
-      // Call edge function to process file
-      const { data, error } = await supabase.functions.invoke("process-transactions", {
+      // Step 1: Map columns using AI
+      const { data: mappingData, error: mappingError } = await supabase.functions.invoke("map-columns", {
         body: {
           fileContent: text,
           fileName: file.name,
-          cuenta,
-          userId: user.user.id,
         },
       });
 
-      if (error) throw error;
+      if (mappingError) throw mappingError;
 
-      toast({
-        title: "¡Archivo procesado!",
-        description: `${data.count} transacciones importadas exitosamente`,
+      console.log("Mapping detected:", mappingData.mapping);
+
+      // Step 2: Parse transactions with detected mapping
+      const { data: parseData, error: parseError } = await supabase.functions.invoke("parse-transactions", {
+        body: {
+          fileContent: text,
+          mapping: mappingData.mapping,
+          userId: user.user.id,
+          cuenta,
+        },
       });
 
-      // Refresh data
-      queryClient.invalidateQueries({ queryKey: ["transactions"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard-metrics"] });
+      if (parseError) throw parseError;
 
-      setFile(null);
-      setCuenta("");
+      // Show preview for user to review
+      setParsedTransactions(parseData.transactions);
+
+      toast({
+        title: "Archivo analizado",
+        description: `${parseData.count} transacciones detectadas. Revísalas antes de guardar.`,
+      });
+
     } catch (error: any) {
       console.error("Upload error:", error);
       toast({
@@ -85,6 +105,27 @@ export const FileUpload = () => {
       setLoading(false);
     }
   };
+
+  const handleComplete = () => {
+    setParsedTransactions(null);
+    setFile(null);
+    setCuenta("");
+  };
+
+  const handleCancel = () => {
+    setParsedTransactions(null);
+  };
+
+  if (parsedTransactions) {
+    return (
+      <TransactionPreview
+        transactions={parsedTransactions}
+        cuenta={cuenta}
+        onComplete={handleComplete}
+        onCancel={handleCancel}
+      />
+    );
+  }
 
   return (
     <Card>
