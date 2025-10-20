@@ -1,9 +1,18 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { TrendingUp, TrendingDown, DollarSign, Activity } from "lucide-react";
-import { format } from "date-fns";
+import { Button } from "@/components/ui/button";
+import { TrendingUp, TrendingDown, DollarSign, Activity, Calendar } from "lucide-react";
+import { format, startOfMonth, endOfMonth, subMonths, startOfYear } from "date-fns";
 import { es } from "date-fns/locale";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface MetricCardProps {
   title: string;
@@ -41,22 +50,38 @@ const MetricCard = ({ title, value, change, icon, trend = "neutral" }: MetricCar
 };
 
 export const Dashboard = () => {
+  const [period, setPeriod] = useState<string>("current-month");
+
+  const getDateRange = () => {
+    const now = new Date();
+    switch (period) {
+      case "current-month":
+        return { start: startOfMonth(now), end: endOfMonth(now) };
+      case "last-month":
+        return { start: startOfMonth(subMonths(now, 1)), end: endOfMonth(subMonths(now, 1)) };
+      case "current-year":
+        return { start: startOfYear(now), end: now };
+      case "last-3-months":
+        return { start: startOfMonth(subMonths(now, 2)), end: endOfMonth(now) };
+      default:
+        return { start: startOfMonth(now), end: endOfMonth(now) };
+    }
+  };
+
   const { data: metrics, isLoading } = useQuery({
-    queryKey: ["dashboard-metrics"],
+    queryKey: ["dashboard-metrics", period],
     queryFn: async () => {
       const { data: user } = await supabase.auth.getUser();
       if (!user.user) throw new Error("No user");
 
-      // Get current month transactions
-      const startOfMonth = new Date();
-      startOfMonth.setDate(1);
-      startOfMonth.setHours(0, 0, 0, 0);
+      const { start, end } = getDateRange();
 
       const { data: transactions, error } = await supabase
         .from("transactions_unified")
         .select("*")
         .eq("user_id", user.user.id)
-        .gte("fecha", format(startOfMonth, "yyyy-MM-dd"));
+        .gte("fecha", format(start, "yyyy-MM-dd"))
+        .lte("fecha", format(end, "yyyy-MM-dd"));
 
       if (error) throw error;
 
@@ -70,14 +95,33 @@ export const Dashboard = () => {
 
       const netFlow = income - expenses;
 
+      // Calculate by category
+      const byCategory = transactions?.reduce((acc, t) => {
+        const cat = t.categoria || "Sin categoría";
+        if (!acc[cat]) acc[cat] = 0;
+        acc[cat] += Number(t.monto_cop);
+        return acc;
+      }, {} as Record<string, number>);
+
       return {
         income,
         expenses,
         netFlow,
         totalTransactions: transactions?.length || 0,
+        byCategory,
       };
     },
   });
+
+  const getPeriodLabel = () => {
+    switch (period) {
+      case "current-month": return "Mes actual";
+      case "last-month": return "Mes pasado";
+      case "current-year": return "Año actual";
+      case "last-3-months": return "Últimos 3 meses";
+      default: return "Período";
+    }
+  };
 
   const formatCOP = (amount: number) => {
     return new Intl.NumberFormat("es-CO", {
@@ -102,33 +146,52 @@ export const Dashboard = () => {
   }
 
   return (
-    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-      <MetricCard
-        title="Ingresos del Mes"
-        value={formatCOP(metrics?.income || 0)}
-        icon={<TrendingUp className="h-4 w-4" />}
-        trend="up"
-        change="Mes actual"
-      />
-      <MetricCard
-        title="Egresos del Mes"
-        value={formatCOP(metrics?.expenses || 0)}
-        icon={<TrendingDown className="h-4 w-4" />}
-        trend="down"
-        change="Mes actual"
-      />
-      <MetricCard
-        title="Flujo Neto"
-        value={formatCOP(metrics?.netFlow || 0)}
-        icon={<DollarSign className="h-4 w-4" />}
-        trend={metrics?.netFlow && metrics.netFlow > 0 ? "up" : "down"}
-      />
-      <MetricCard
-        title="Transacciones"
-        value={String(metrics?.totalTransactions || 0)}
-        icon={<Activity className="h-4 w-4" />}
-        change="Mes actual"
-      />
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-bold">Resumen Financiero</h2>
+        <Select value={period} onValueChange={setPeriod}>
+          <SelectTrigger className="w-[200px]">
+            <Calendar className="w-4 h-4 mr-2" />
+            <SelectValue placeholder="Seleccionar período" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="current-month">Mes actual</SelectItem>
+            <SelectItem value="last-month">Mes pasado</SelectItem>
+            <SelectItem value="last-3-months">Últimos 3 meses</SelectItem>
+            <SelectItem value="current-year">Año actual</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <MetricCard
+          title="Ingresos"
+          value={formatCOP(metrics?.income || 0)}
+          icon={<TrendingUp className="h-4 w-4" />}
+          trend="up"
+          change={getPeriodLabel()}
+        />
+        <MetricCard
+          title="Egresos"
+          value={formatCOP(metrics?.expenses || 0)}
+          icon={<TrendingDown className="h-4 w-4" />}
+          trend="down"
+          change={getPeriodLabel()}
+        />
+        <MetricCard
+          title="Flujo Neto"
+          value={formatCOP(metrics?.netFlow || 0)}
+          icon={<DollarSign className="h-4 w-4" />}
+          trend={metrics?.netFlow && metrics.netFlow > 0 ? "up" : "down"}
+          change={getPeriodLabel()}
+        />
+        <MetricCard
+          title="Transacciones"
+          value={String(metrics?.totalTransactions || 0)}
+          icon={<Activity className="h-4 w-4" />}
+          change={getPeriodLabel()}
+        />
+      </div>
     </div>
   );
 };
