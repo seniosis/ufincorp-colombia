@@ -23,12 +23,14 @@ serve(async (req) => {
 
     const isPDF = fileName.toLowerCase().endsWith('.pdf');
     
-    // For PDFs, take more content and extract transactions directly
+    // For PDFs, take much more content to ensure we get the transactions table
     // For CSV/TSV, take first few lines to detect format
     const lines = fileContent.split("\n");
     const sampleData = isPDF 
-      ? lines.slice(0, 100).join("\n")  // More lines for PDF analysis
+      ? lines.slice(0, 300).join("\n")  // Much more lines for PDF analysis to capture full transaction tables
       : lines.slice(0, 5).join("\n");   // Less for CSV format detection
+
+    console.log(`Analyzing ${isPDF ? 'PDF' : 'CSV/TSV'} file with ${lines.length} total lines, using ${isPDF ? 300 : 5} lines for analysis`);
 
     // Use AI to detect columns and map them
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -43,45 +45,52 @@ serve(async (req) => {
           {
             role: "system",
             content: isPDF 
-              ? `Eres un experto en análisis de extractos bancarios PDF.
-Tu tarea es extraer TODAS las transacciones del extracto bancario.
+              ? `Eres un experto en análisis de extractos bancarios PDF. Tu tarea es extraer TODAS las transacciones.
 
-Responde SOLO con un objeto JSON válido sin markdown:
+BUSCA tablas con estos encabezados comunes:
+- Date/Fecha, Description/Descripción, Amount/Monto, Balance/Saldo
+- Ref Number/Referencia, Transaction/Transacción
+- Débito/Crédito, Ingreso/Egreso
+
+REGLAS IMPORTANTES:
+1. Montos negativos o en columna de débitos = tipo "out"
+2. Montos positivos o en columna de créditos = tipo "in"
+3. Fechas: convierte a formato YYYY-MM-DD (ej: 06/09/2025 → 2025-09-06)
+4. Montos: elimina símbolos de moneda, comas, espacios. Solo números y punto decimal
+5. Si ves "USD to AED" o conversiones, el monto es la cantidad recibida (tipo "in")
+
+Responde SOLO con JSON válido (sin markdown):
 {
   "detectedFormat": "pdf",
   "transactions": [
     {
-      "fecha": "2025-09-15",
-      "descripcion": "Descripción completa de la transacción",
-      "monto_original": 150000.50,
-      "moneda": "COP",
-      "tipo": "in" o "out",
-      "referencia": "número de referencia si existe"
+      "fecha": "2025-09-06",
+      "descripcion": "To Andres Felipe Florez Villegas",
+      "monto_original": 14600,
+      "moneda": "AED",
+      "tipo": "out",
+      "referencia": "P157389908"
     }
   ],
-  "defaultCurrency": "COP",
+  "defaultCurrency": "AED",
   "confidence": 0.9
 }
 
-IMPORTANTE:
-- Extrae TODAS las transacciones que encuentres
-- El tipo debe ser "in" para ingresos/créditos o "out" para egresos/débitos
-- Convierte fechas a formato YYYY-MM-DD
-- Limpia los montos de símbolos y deja solo números`
-              : `Eres un experto en análisis de extractos bancarios y archivos CSV/TSV. 
-Tu tarea es identificar qué columnas están presentes y mapearlas a este esquema:
-- fecha: fecha de la transacción
-- descripcion: descripción del movimiento
-- monto: monto de la transacción
-- moneda: moneda (COP, USD, AED, etc.)
-- tipo: tipo de movimiento (in/out, ingreso/egreso)
-- referencia: número de referencia (opcional)
-
-Responde SOLO con un objeto JSON válido sin markdown:
+Si NO encuentras transacciones, retorna:
 {
-  "detectedFormat": "csv" o "tsv" o "pipe-separated",
-  "separator": "," o "\\t" o "|",
-  "hasHeader": true/false,
+  "detectedFormat": "pdf",
+  "transactions": [],
+  "defaultCurrency": "USD",
+  "confidence": 0.1
+}`
+              : `Eres un experto en análisis de extractos bancarios CSV/TSV.
+Identifica las columnas y mapéalas a: fecha, descripcion, monto, moneda, tipo, referencia
+
+Responde SOLO con JSON válido (sin markdown):
+{
+  "detectedFormat": "csv",
+  "separator": ",",
+  "hasHeader": true,
   "columnMapping": {
     "0": "fecha",
     "1": "descripcion",
@@ -94,7 +103,7 @@ Responde SOLO con un objeto JSON válido sin markdown:
           {
             role: "user",
             content: isPDF
-              ? `Extrae todas las transacciones de este extracto bancario PDF:\n\n${sampleData}`
+              ? `Analiza este extracto bancario PDF y extrae TODAS las transacciones de las tablas:\n\n${sampleData}`
               : `Analiza este extracto y mapea las columnas:\n\n${sampleData}`
           }
         ],
@@ -119,11 +128,28 @@ Responde SOLO con un objeto JSON válido sin markdown:
     const aiData = await response.json();
     const mappingText = aiData.choices[0].message.content.trim();
     
+    console.log("Raw AI response:", mappingText.substring(0, 500));
+    
     // Remove markdown code blocks if present
-    const cleanJson = mappingText.replace(/```json\n?/g, "").replace(/```\n?/g, "");
+    const cleanJson = mappingText.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
     const mapping = JSON.parse(cleanJson);
 
-    console.log("Detected mapping:", mapping);
+    console.log("Detected mapping:", JSON.stringify(mapping, null, 2));
+    
+    // Validate PDF extraction
+    if (isPDF) {
+      if (!mapping.transactions || !Array.isArray(mapping.transactions)) {
+        console.error("PDF parsing failed: no transactions array in response");
+        throw new Error("No se pudieron extraer transacciones del PDF. El formato podría no ser compatible.");
+      }
+      
+      if (mapping.transactions.length === 0) {
+        console.error("PDF parsing failed: empty transactions array");
+        throw new Error("No se encontraron transacciones en el PDF. Verifica que el archivo contenga un extracto bancario con tabla de movimientos.");
+      }
+      
+      console.log(`Successfully extracted ${mapping.transactions.length} transactions from PDF`);
+    }
 
     return new Response(
       JSON.stringify({ success: true, mapping }),
