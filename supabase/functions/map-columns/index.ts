@@ -21,9 +21,14 @@ serve(async (req) => {
 
     console.log(`Analyzing file structure: ${fileName}`);
 
-    // Get first few lines to analyze
-    const lines = fileContent.split("\n").slice(0, 5);
-    const sampleData = lines.join("\n");
+    const isPDF = fileName.toLowerCase().endsWith('.pdf');
+    
+    // For PDFs, take more content and extract transactions directly
+    // For CSV/TSV, take first few lines to detect format
+    const lines = fileContent.split("\n");
+    const sampleData = isPDF 
+      ? lines.slice(0, 100).join("\n")  // More lines for PDF analysis
+      : lines.slice(0, 5).join("\n");   // Less for CSV format detection
 
     // Use AI to detect columns and map them
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -37,16 +42,42 @@ serve(async (req) => {
         messages: [
           {
             role: "system",
-            content: `Eres un experto en análisis de extractos bancarios y archivos financieros. 
-Tu tarea es identificar qué columnas están presentes en el archivo y mapearlas a este esquema estándar:
+            content: isPDF 
+              ? `Eres un experto en análisis de extractos bancarios PDF.
+Tu tarea es extraer TODAS las transacciones del extracto bancario.
+
+Responde SOLO con un objeto JSON válido sin markdown:
+{
+  "detectedFormat": "pdf",
+  "transactions": [
+    {
+      "fecha": "2025-09-15",
+      "descripcion": "Descripción completa de la transacción",
+      "monto_original": 150000.50,
+      "moneda": "COP",
+      "tipo": "in" o "out",
+      "referencia": "número de referencia si existe"
+    }
+  ],
+  "defaultCurrency": "COP",
+  "confidence": 0.9
+}
+
+IMPORTANTE:
+- Extrae TODAS las transacciones que encuentres
+- El tipo debe ser "in" para ingresos/créditos o "out" para egresos/débitos
+- Convierte fechas a formato YYYY-MM-DD
+- Limpia los montos de símbolos y deja solo números`
+              : `Eres un experto en análisis de extractos bancarios y archivos CSV/TSV. 
+Tu tarea es identificar qué columnas están presentes y mapearlas a este esquema:
 - fecha: fecha de la transacción
 - descripcion: descripción del movimiento
-- monto: monto de la transacción (puede ser monto_original, valor, amount, etc.)
-- moneda: moneda (COP, USD, AED, etc.) - si no está presente, asume COP
-- tipo: tipo de movimiento (in/out, ingreso/egreso, credito/debito, etc.)
-- referencia: número de referencia, guía, orden (opcional)
+- monto: monto de la transacción
+- moneda: moneda (COP, USD, AED, etc.)
+- tipo: tipo de movimiento (in/out, ingreso/egreso)
+- referencia: número de referencia (opcional)
 
-Responde SOLO con un objeto JSON válido sin markdown, con esta estructura:
+Responde SOLO con un objeto JSON válido sin markdown:
 {
   "detectedFormat": "csv" o "tsv" o "pipe-separated",
   "separator": "," o "\\t" o "|",
@@ -54,8 +85,7 @@ Responde SOLO con un objeto JSON válido sin markdown, con esta estructura:
   "columnMapping": {
     "0": "fecha",
     "1": "descripcion",
-    "2": "monto",
-    ...
+    "2": "monto"
   },
   "defaultCurrency": "COP",
   "confidence": 0.85
@@ -63,7 +93,9 @@ Responde SOLO con un objeto JSON válido sin markdown, con esta estructura:
           },
           {
             role: "user",
-            content: `Analiza este extracto y mapea las columnas:\n\n${sampleData}`
+            content: isPDF
+              ? `Extrae todas las transacciones de este extracto bancario PDF:\n\n${sampleData}`
+              : `Analiza este extracto y mapea las columnas:\n\n${sampleData}`
           }
         ],
       }),
@@ -72,7 +104,16 @@ Responde SOLO con un objeto JSON válido sin markdown, con esta estructura:
     if (!response.ok) {
       const errorText = await response.text();
       console.error("AI error:", errorText);
-      throw new Error("Failed to analyze file structure");
+      
+      // Handle rate limiting
+      if (response.status === 429) {
+        throw new Error("Límite de solicitudes excedido. Por favor, intenta de nuevo en unos momentos.");
+      }
+      if (response.status === 402) {
+        throw new Error("Créditos agotados. Por favor, agrega fondos a tu cuenta.");
+      }
+      
+      throw new Error("Error al analizar la estructura del archivo");
     }
 
     const aiData = await response.json();

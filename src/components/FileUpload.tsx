@@ -62,7 +62,12 @@ export const FileUpload = () => {
       // Read file as text
       const text = await file.text();
 
-      // Step 1: Map columns using AI
+      // Step 1: Map columns using AI (with timeout)
+      toast({
+        title: "Analizando archivo...",
+        description: "Esto puede tomar hasta 30 segundos para PDFs grandes",
+      });
+
       const { data: mappingData, error: mappingError } = await supabase.functions.invoke("map-columns", {
         body: {
           fileContent: text,
@@ -70,28 +75,85 @@ export const FileUpload = () => {
         },
       });
 
-      if (mappingError) throw mappingError;
+      if (mappingError) {
+        console.error("Mapping error:", mappingError);
+        throw new Error(mappingError.message || "Error al analizar el formato del archivo");
+      }
 
       console.log("Mapping detected:", mappingData.mapping);
 
-      // Step 2: Parse transactions with detected mapping
-      const { data: parseData, error: parseError } = await supabase.functions.invoke("parse-transactions", {
-        body: {
-          fileContent: text,
-          mapping: mappingData.mapping,
-          userId: user.user.id,
-          cuenta,
-        },
-      });
+      let parsedTransactions: ParsedTransaction[];
 
-      if (parseError) throw parseError;
+      // For PDFs, AI already extracted transactions directly
+      if (mappingData.mapping.detectedFormat === "pdf" && mappingData.mapping.transactions) {
+        console.log(`PDF: ${mappingData.mapping.transactions.length} transactions extracted directly`);
+        
+        if (mappingData.mapping.transactions.length === 0) {
+          throw new Error("No se detectaron transacciones en el PDF. Por favor verifica que el archivo contenga un extracto bancario válido.");
+        }
+
+        toast({
+          title: "Clasificando transacciones...",
+          description: `Procesando ${mappingData.mapping.transactions.length} transacciones`,
+        });
+
+        // Classify each transaction
+        const classificationsPromises = mappingData.mapping.transactions.map(async (tx: any) => {
+          const { data, error } = await supabase.functions.invoke("classify-transaction", {
+            body: {
+              descripcion: tx.descripcion,
+            },
+          });
+          
+          if (error) {
+            console.error("Classification error:", error);
+            return { categoria: "OTHER", contrapartida: "UNKNOWN" };
+          }
+          
+          return data;
+        });
+        
+        const classifications = await Promise.all(classificationsPromises);
+        
+        parsedTransactions = mappingData.mapping.transactions.map((tx: any, i: number) => ({
+          ...tx,
+          categoria: classifications[i].categoria,
+          contrapartida: classifications[i].contrapartida,
+        }));
+      } else {
+        // For CSV/TSV, parse with mapping
+        toast({
+          title: "Procesando transacciones...",
+          description: "Analizando y clasificando cada transacción",
+        });
+
+        const { data: parseData, error: parseError } = await supabase.functions.invoke("parse-transactions", {
+          body: {
+            fileContent: text,
+            mapping: mappingData.mapping,
+            userId: user.user.id,
+            cuenta,
+          },
+        });
+
+        if (parseError) {
+          console.error("Parse error:", parseError);
+          throw new Error(parseError.message || "Error al procesar las transacciones");
+        }
+        
+        if (!parseData.transactions || parseData.transactions.length === 0) {
+          throw new Error("No se detectaron transacciones. Verifica que el archivo tenga el formato correcto.");
+        }
+
+        parsedTransactions = parseData.transactions;
+      }
 
       // Show preview for user to review
-      setParsedTransactions(parseData.transactions);
+      setParsedTransactions(parsedTransactions);
 
       toast({
         title: "Archivo analizado",
-        description: `${parseData.count} transacciones detectadas. Revísalas antes de guardar.`,
+        description: `${parsedTransactions.length} transacciones detectadas. Revísalas antes de guardar.`,
       });
 
     } catch (error: any) {

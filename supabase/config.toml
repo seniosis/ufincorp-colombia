@@ -14,7 +14,10 @@ verify_jwt = true
 verify_jwt = true
 
 [functions.map-columns]
-verify_jwt = true
+verify_jwt = false
 
 [functions.parse-transactions]
+verify_jwt = false
+
+[functions.classify-transaction]
 verify_jwt = true
