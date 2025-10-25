@@ -8,104 +8,114 @@ const corsHeaders = {
 const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") {
+  if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
     const { fileContent, fileName } = await req.json();
+    console.log('Analyzing file structure:', fileName);
 
-    if (!fileContent) {
-      throw new Error("Missing file content");
+    const fileExtension = fileName.split('.').pop()?.toLowerCase();
+    const isPDF = fileExtension === 'pdf';
+    
+    // Check if it's a Dropi statement by looking for keywords
+    const isDropi = fileContent.toLowerCase().includes('dropi') || 
+                    fileContent.toLowerCase().includes('recarga topup') ||
+                    fileContent.toLowerCase().includes('movimientos y transacciones');
+    
+    // For PDFs, use more data for analysis since they usually have a fixed format
+    // For CSV/TSV, use less since they usually have a header row
+    const contentToAnalyze = isPDF ? fileContent : fileContent.split('\n').slice(0, 10).join('\n');
+    
+    let systemPrompt = '';
+    
+    if (isPDF && isDropi) {
+      systemPrompt = `You are an expert at analyzing Dropi bank statement PDFs. Extract ALL transactions from this Dropi statement.
+      
+      The format is typically:
+      FECHA | TRANSACCIÓN/DESCRIPCIÓN | TIPO DE OPERACIÓN/TIPO | ESTADO | VALOR/MONTO | SALDO
+      
+      Important rules:
+      - Dates are in DD/MM/YYYY format, convert to YYYY-MM-DD
+      - "Débito" means expense (tipo: "out")
+      - "Crédito" means income (tipo: "in")
+      - Remove $ and commas from amounts
+      - Currency is always COP
+      - Negative amounts mean "out", positive mean "in"
+      
+      Return in this exact format:
+      {
+        "detectedFormat": "dropi_pdf",
+        "sourceType": "dropi",
+        "transactions": [
+          {
+            "fecha": "YYYY-MM-DD",
+            "descripcion": "transaction description",
+            "monto_original": number (always positive),
+            "moneda": "COP",
+            "tipo": "in" or "out",
+            "saldo": number (optional)
+          }
+        ],
+        "cardNumber": "last 4 digits if found",
+        "period": "period if found",
+        "confidence": 0.95
+      }
+      
+      CRITICAL: Return ONLY valid JSON, no markdown formatting.`;
+    } else if (isPDF) {
+      systemPrompt = `You are an expert at analyzing bank statement PDFs. Extract transactions from this bank statement and return a JSON response.
+      
+      Return in this format:
+      {
+        "detectedFormat": "pdf",
+        "transactions": [
+          {
+            "fecha": "YYYY-MM-DD",
+            "descripcion": "transaction description",
+            "monto_original": number (always positive),
+            "moneda": "currency code",
+            "tipo": "in" or "out"
+          }
+        ],
+        "confidence": 0.0 to 1.0
+      }
+      
+      CRITICAL: Return ONLY valid JSON, no markdown formatting.`;
+    } else {
+      systemPrompt = `You are an expert at analyzing file formats. This is a bank statement.
+      Detect if it's CSV or TSV, identify the separator, if it has headers, and map the columns.
+      
+      Return ONLY a JSON object in this exact format:
+      {
+        "detectedFormat": "csv" or "tsv",
+        "separator": "," or "\\t",
+        "hasHeader": true or false,
+        "columnMapping": {
+          "0": "fecha",
+          "1": "descripcion",
+          "2": "monto",
+          etc...
+        },
+        "defaultCurrency": "COP" or other currency code,
+        "confidence": number between 0 and 1
+      }
+      
+      CRITICAL: Return ONLY valid JSON, no markdown formatting.`;
     }
 
-    console.log(`Analyzing file structure: ${fileName}`);
-
-    const isPDF = fileName.toLowerCase().endsWith('.pdf');
-    
-    // For PDFs, take much more content to ensure we get the transactions table
-    // For CSV/TSV, take first few lines to detect format
-    const lines = fileContent.split("\n");
-    const sampleData = isPDF 
-      ? lines.slice(0, 300).join("\n")  // Much more lines for PDF analysis to capture full transaction tables
-      : lines.slice(0, 5).join("\n");   // Less for CSV format detection
-
-    console.log(`Analyzing ${isPDF ? 'PDF' : 'CSV/TSV'} file with ${lines.length} total lines, using ${isPDF ? 300 : 5} lines for analysis`);
-
-    // Use AI to detect columns and map them
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
+    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      method: 'POST',
       headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
+        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+        model: 'google/gemini-2.5-flash',
         messages: [
-          {
-            role: "system",
-            content: isPDF 
-              ? `Eres un experto en análisis de extractos bancarios PDF. Tu tarea es extraer TODAS las transacciones.
-
-BUSCA tablas con estos encabezados comunes:
-- Date/Fecha, Description/Descripción, Amount/Monto, Balance/Saldo
-- Ref Number/Referencia, Transaction/Transacción
-- Débito/Crédito, Ingreso/Egreso
-
-REGLAS IMPORTANTES:
-1. Montos negativos o en columna de débitos = tipo "out"
-2. Montos positivos o en columna de créditos = tipo "in"
-3. Fechas: convierte a formato YYYY-MM-DD (ej: 06/09/2025 → 2025-09-06)
-4. Montos: elimina símbolos de moneda, comas, espacios. Solo números y punto decimal
-5. Si ves "USD to AED" o conversiones, el monto es la cantidad recibida (tipo "in")
-
-Responde SOLO con JSON válido (sin markdown):
-{
-  "detectedFormat": "pdf",
-  "transactions": [
-    {
-      "fecha": "2025-09-06",
-      "descripcion": "To Andres Felipe Florez Villegas",
-      "monto_original": 14600,
-      "moneda": "AED",
-      "tipo": "out",
-      "referencia": "P157389908"
-    }
-  ],
-  "defaultCurrency": "AED",
-  "confidence": 0.9
-}
-
-Si NO encuentras transacciones, retorna:
-{
-  "detectedFormat": "pdf",
-  "transactions": [],
-  "defaultCurrency": "USD",
-  "confidence": 0.1
-}`
-              : `Eres un experto en análisis de extractos bancarios CSV/TSV.
-Identifica las columnas y mapéalas a: fecha, descripcion, monto, moneda, tipo, referencia
-
-Responde SOLO con JSON válido (sin markdown):
-{
-  "detectedFormat": "csv",
-  "separator": ",",
-  "hasHeader": true,
-  "columnMapping": {
-    "0": "fecha",
-    "1": "descripcion",
-    "2": "monto"
-  },
-  "defaultCurrency": "COP",
-  "confidence": 0.85
-}`
-          },
-          {
-            role: "user",
-            content: isPDF
-              ? `Analiza este extracto bancario PDF y extrae TODAS las transacciones de las tablas:\n\n${sampleData}`
-              : `Analiza este extracto y mapea las columnas:\n\n${sampleData}`
-          }
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: contentToAnalyze }
         ],
       }),
     });

@@ -13,6 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { AccountsManager } from "./AccountsManager";
 
 interface MetricCardProps {
   title: string;
@@ -192,6 +193,8 @@ export const Dashboard = () => {
           change={getPeriodLabel()}
         />
       </div>
+      
+      <AccountsManager />
     </div>
   );
 };

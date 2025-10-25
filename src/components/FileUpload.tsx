@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,20 +23,28 @@ interface ParsedTransaction {
 
 export const FileUpload = () => {
   const [file, setFile] = useState<File | null>(null);
-  const [cuenta, setCuenta] = useState("");
+  const [accountId, setAccountId] = useState("");
   const [loading, setLoading] = useState(false);
   const [parsedTransactions, setParsedTransactions] = useState<ParsedTransaction[] | null>(null);
   const { toast } = useToast();
 
-  const cuentas = [
-    "WIO_MAIN",
-    "DROPI_CARTERA",
-    "DROPI_WALLET_PROVEEDURIA",
-    "DROPI_WALLET_TIENDA",
-    "BANCOLOMBIA_UFUN",
-    "SLASH_MAIN",
-    "MERCURY_MAIN",
-  ];
+  const { data: accounts } = useQuery({
+    queryKey: ["accounts"],
+    queryFn: async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("No user found");
+
+      const { data, error } = await supabase
+        .from("accounts")
+        .select("*")
+        .eq("user_id", user.id)
+        .eq("activa", true)
+        .order("nombre");
+
+      if (error) throw error;
+      return data;
+    },
+  });
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -44,7 +53,7 @@ export const FileUpload = () => {
   };
 
   const handleUpload = async () => {
-    if (!file || !cuenta) {
+    if (!file || !accountId) {
       toast({
         title: "Error",
         description: "Por favor selecciona un archivo y una cuenta",
@@ -84,8 +93,8 @@ export const FileUpload = () => {
 
       let parsedTransactions: ParsedTransaction[];
 
-      // For PDFs, AI already extracted transactions directly
-      if (mappingData.mapping.detectedFormat === "pdf" && mappingData.mapping.transactions) {
+      // For PDFs or Dropi, AI already extracted transactions directly
+      if ((mappingData.mapping.detectedFormat === "pdf" || mappingData.mapping.detectedFormat === "dropi_pdf") && mappingData.mapping.transactions) {
         console.log(`PDF: ${mappingData.mapping.transactions.length} transactions extracted directly`);
         
         if (mappingData.mapping.transactions.length === 0) {
@@ -132,7 +141,7 @@ export const FileUpload = () => {
             fileContent: text,
             mapping: mappingData.mapping,
             userId: user.user.id,
-            cuenta,
+            accountId: accountId,
           },
         });
 
@@ -171,18 +180,18 @@ export const FileUpload = () => {
   const handleComplete = () => {
     setParsedTransactions(null);
     setFile(null);
-    setCuenta("");
+    setAccountId("");
   };
 
   const handleCancel = () => {
     setParsedTransactions(null);
   };
 
-  if (parsedTransactions) {
+  if (parsedTransactions && accountId) {
     return (
       <TransactionPreview
         transactions={parsedTransactions}
-        cuenta={cuenta}
+        accountId={accountId}
         onComplete={handleComplete}
         onCancel={handleCancel}
       />
@@ -199,17 +208,23 @@ export const FileUpload = () => {
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2">
-          <Label htmlFor="cuenta">Cuenta Origen</Label>
-          <Select value={cuenta} onValueChange={setCuenta}>
-            <SelectTrigger id="cuenta">
+          <Label htmlFor="account">Cuenta de Destino</Label>
+          <Select value={accountId} onValueChange={setAccountId}>
+            <SelectTrigger id="account">
               <SelectValue placeholder="Selecciona una cuenta" />
             </SelectTrigger>
             <SelectContent>
-              {cuentas.map((c) => (
-                <SelectItem key={c} value={c}>
-                  {c}
+              {accounts && accounts.length > 0 ? (
+                accounts.map((account) => (
+                  <SelectItem key={account.id} value={account.id}>
+                    {account.nombre} ({account.moneda}) - {account.tipo}
+                  </SelectItem>
+                ))
+              ) : (
+                <SelectItem value="none" disabled>
+                  No hay cuentas disponibles. Crea una cuenta primero.
                 </SelectItem>
-              ))}
+              )}
             </SelectContent>
           </Select>
         </div>
@@ -232,7 +247,7 @@ export const FileUpload = () => {
 
         <Button
           onClick={handleUpload}
-          disabled={!file || !cuenta || loading}
+          disabled={!file || !accountId || loading}
           className="w-full"
         >
           {loading ? (

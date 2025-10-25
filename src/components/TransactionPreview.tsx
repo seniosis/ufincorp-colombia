@@ -22,7 +22,7 @@ interface Transaction {
 
 interface TransactionPreviewProps {
   transactions: Transaction[];
-  cuenta: string;
+  accountId: string;
   onComplete: () => void;
   onCancel: () => void;
 }
@@ -39,7 +39,7 @@ const CATEGORIAS = [
   "OTHER",
 ];
 
-export const TransactionPreview = ({ transactions, cuenta, onComplete, onCancel }: TransactionPreviewProps) => {
+export const TransactionPreview = ({ transactions, accountId, onComplete, onCancel }: TransactionPreviewProps) => {
   const [editedTransactions, setEditedTransactions] = useState(transactions);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
@@ -64,11 +64,19 @@ export const TransactionPreview = ({ transactions, cuenta, onComplete, onCancel 
       const { data: user } = await supabase.auth.getUser();
       if (!user.user) throw new Error("No user");
 
+      // Get account name for backward compatibility
+      const { data: account } = await supabase
+        .from("accounts")
+        .select("nombre")
+        .eq("id", accountId)
+        .single();
+
       // Convert and prepare for DB
       const dbTransactions = editedTransactions.map(t => ({
         fecha: t.fecha,
         descripcion: t.descripcion,
-        cuenta,
+        cuenta: account?.nombre || "Unknown",
+        account_id: accountId,
         tipo: t.tipo,
         monto_original: t.monto_original,
         moneda: t.moneda,
@@ -95,6 +103,7 @@ export const TransactionPreview = ({ transactions, cuenta, onComplete, onCancel 
 
       queryClient.invalidateQueries({ queryKey: ["transactions"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-metrics"] });
+      queryClient.invalidateQueries({ queryKey: ["accounts"] });
       
       onComplete();
     } catch (error: any) {

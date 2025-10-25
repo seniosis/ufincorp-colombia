@@ -14,6 +14,48 @@ export type Database = {
   }
   public: {
     Tables: {
+      accounts: {
+        Row: {
+          activa: boolean | null
+          created_at: string
+          entidad: string | null
+          id: string
+          moneda: string
+          nombre: string
+          numero_cuenta: string | null
+          saldo_actual: number | null
+          tipo: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          activa?: boolean | null
+          created_at?: string
+          entidad?: string | null
+          id?: string
+          moneda?: string
+          nombre: string
+          numero_cuenta?: string | null
+          saldo_actual?: number | null
+          tipo: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          activa?: boolean | null
+          created_at?: string
+          entidad?: string | null
+          id?: string
+          moneda?: string
+          nombre?: string
+          numero_cuenta?: string | null
+          saldo_actual?: number | null
+          tipo?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       categorization_rules: {
         Row: {
           active: boolean | null
@@ -79,6 +121,7 @@ export type Database = {
       }
       transactions_unified: {
         Row: {
+          account_id: string | null
           categoria: string | null
           confidence: number | null
           contrapartida: string | null
@@ -98,6 +141,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          account_id?: string | null
           categoria?: string | null
           confidence?: number | null
           contrapartida?: string | null
@@ -117,6 +161,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          account_id?: string | null
           categoria?: string | null
           confidence?: number | null
           contrapartida?: string | null
@@ -135,7 +180,15 @@ export type Database = {
           updated_at?: string
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "transactions_unified_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "accounts"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
