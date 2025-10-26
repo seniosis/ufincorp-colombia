@@ -102,32 +102,16 @@ export const FileUpload = () => {
         }
 
         toast({
-          title: "Clasificando transacciones...",
-          description: `Procesando ${mappingData.mapping.transactions.length} transacciones`,
+          title: "Transacciones extraídas",
+          description: `${mappingData.mapping.transactions.length} transacciones listas para revisar`,
         });
 
-        // Classify each transaction
-        const classificationsPromises = mappingData.mapping.transactions.map(async (tx: any) => {
-          const { data, error } = await supabase.functions.invoke("classify-transaction", {
-            body: {
-              descripcion: tx.descripcion,
-            },
-          });
-          
-          if (error) {
-            console.error("Classification error:", error);
-            return { categoria: "OTHER", contrapartida: "UNKNOWN" };
-          }
-          
-          return data;
-        });
-        
-        const classifications = await Promise.all(classificationsPromises);
-        
-        parsedTransactions = mappingData.mapping.transactions.map((tx: any, i: number) => ({
+        // For Dropi PDFs, skip auto-classification to avoid timeout
+        // Users can classify manually later
+        parsedTransactions = mappingData.mapping.transactions.map((tx: any) => ({
           ...tx,
-          categoria: classifications[i].categoria,
-          contrapartida: classifications[i].contrapartida,
+          categoria: "SIN_CLASIFICAR",
+          contrapartida: tx.descripcion.substring(0, 50),
         }));
       } else {
         // For CSV/TSV, parse with mapping
