@@ -31,62 +31,49 @@ serve(async (req) => {
     let systemPrompt = '';
     
     if (isPDF && isDropi) {
-      systemPrompt = `You are an expert at analyzing Dropi bank statement PDFs. Extract ALL transactions from this Dropi statement.
+      systemPrompt = `You are an expert at analyzing Dropi bank statement PDFs. Extract EXACTLY what you see in the PDF table.
+
+      CRITICAL RULES - DO NOT INVENT DATA:
+      1. Extract ONLY transactions that are EXPLICITLY shown in the PDF table
+      2. Copy dates EXACTLY as shown (format: DD/MM/YYYY)
+      3. Copy descriptions EXACTLY as written in the TRANSACCIÓN column
+      4. Copy amounts EXACTLY as shown in the VALOR/MONTO column
+      5. DO NOT generate sample data, DO NOT make up transactions
+      6. If you see "01/09/2025" write "2025-09-01" (convert day/month/year to year-month-day)
+      7. If you see "15/08/2025" write "2025-08-15" (NOT 2024)
       
-      The Dropi PDF has a table with these columns:
-      - FECHA: Date in DD/MM/YYYY format (e.g., 01/09/2025)
-      - TRANSACCIÓN or DESCRIPCIÓN: Transaction description (e.g., "Compra comercio FACEBK *ZRC8RX8NJ2" or "Recarga topup -")
-      - TIPO DE OPERACIÓN or TIPO: Either "Débito" (expense) or "Crédito" (income)
-      - ESTADO DE LA OPERACIÓN or ESTADO: Transaction status (usually "Aprobada")
-      - VALOR or MONTO: Amount with $ sign and commas (e.g., -$1,697,818.41 or $2,000,000.00)
-      - SALDO or SALDOS: Account balance after transaction
+      Table structure in Dropi PDFs:
+      | FECHA | TRANSACCIÓN | TIPO DE OPERACIÓN | ESTADO | VALOR | SALDO |
       
-      CRITICAL parsing rules:
-      1. DATES: Convert DD/MM/YYYY to YYYY-MM-DD format
-         - Example: "01/09/2025" becomes "2025-09-01"
-         - Example: "15/08/2025" becomes "2025-08-15"
+      Date conversion (BE VERY CAREFUL):
+      - DD/MM/YYYY → YYYY-MM-DD
+      - 01/09/2025 → 2025-09-01 (NOT 2024-09-01)
+      - 23/12/2024 → 2024-12-23 (NOT 2025-12-23)
       
-      2. AMOUNTS: 
-         - Remove "$" and "," from amounts
-         - Remove the minus sign from negative amounts
-         - Store as positive number in "monto_original"
-         - The sign indicates transaction type, not the amount itself
+      Amount parsing:
+      - Remove $ sign and commas
+      - "-$1,697,818.41" → monto_original: 1697818.41, tipo: "out"
+      - "$2,000,000.00" → monto_original: 2000000.00, tipo: "in"
       
-      3. TRANSACTION TYPE:
-         - If "TIPO DE OPERACIÓN" is "Débito" OR amount starts with minus (-), set tipo: "out"
-         - If "TIPO DE OPERACIÓN" is "Crédito" OR amount is positive, set tipo: "in"
+      Transaction type:
+      - "Débito" OR negative amount (-$) → tipo: "out"
+      - "Crédito" OR positive amount ($) → tipo: "in"
       
-      4. DESCRIPTION: Use the full transaction description from "TRANSACCIÓN" column
+      Example of EXACT extraction:
+      PDF shows: | 01/09/2025 | Compra comercio FACEBK *ZRC8RX8NJ2 | Débito | Aprobada | -$1,697,818.41 | $6,751,818.80 |
+      You return: {"fecha": "2025-09-01", "descripcion": "Compra comercio FACEBK *ZRC8RX8NJ2", "monto_original": 1697818.41, "moneda": "COP", "tipo": "out", "saldo": 6751818.80}
       
-      5. CURRENCY: Always "COP" for Dropi transactions
-      
-      Examples:
-      Input: | 01/09/2025 | Compra comercio FACEBK *ZRC8RX8NJ2 | Débito | Aprobada | -$1,697,818.41 | $6,751,818.80 |
-      Output: {"fecha": "2025-09-01", "descripcion": "Compra comercio FACEBK *ZRC8RX8NJ2", "monto_original": 1697818.41, "moneda": "COP", "tipo": "out", "saldo": 6751818.80}
-      
-      Input: | 04/09/2025 | Recarga topup - | Crédito | Aprobada | $2,000,000.00 | $8,516,701.63 |
-      Output: {"fecha": "2025-09-04", "descripcion": "Recarga topup -", "monto_original": 2000000.00, "moneda": "COP", "tipo": "in", "saldo": 8516701.63}
-      
-      Return in this exact JSON format:
+      Response format:
       {
         "detectedFormat": "dropi_pdf",
         "sourceType": "dropi",
-        "transactions": [
-          {
-            "fecha": "YYYY-MM-DD",
-            "descripcion": "full transaction description",
-            "monto_original": positive_number,
-            "moneda": "COP",
-            "tipo": "in" or "out",
-            "saldo": positive_number
-          }
-        ],
-        "cardNumber": "last 4 digits if found in PDF",
-        "period": "month/year if found",
+        "transactions": [array of transaction objects extracted from PDF],
+        "cardNumber": "last 4 digits from PDF header",
+        "period": "date range from PDF header",
         "confidence": 0.95
       }
       
-      CRITICAL: Return ONLY valid JSON, no markdown formatting, no code blocks.`;
+      CRITICAL: Return ONLY valid JSON without markdown. Extract ONLY what's in the PDF, do not fabricate data.`;
     } else if (isPDF) {
       systemPrompt = `You are an expert at analyzing bank statement PDFs. Extract transactions from this bank statement and return a JSON response.
       
@@ -161,13 +148,18 @@ serve(async (req) => {
     const aiData = await response.json();
     const mappingText = aiData.choices[0].message.content.trim();
     
-    console.log("Raw AI response:", mappingText.substring(0, 500));
+    console.log("Raw AI response (first 500 chars):", mappingText.substring(0, 500));
     
     // Remove markdown code blocks if present
     const cleanJson = mappingText.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
     const mapping = JSON.parse(cleanJson);
 
-    console.log("Detected mapping:", JSON.stringify(mapping, null, 2));
+    console.log("Parsed mapping - format:", mapping.detectedFormat);
+    console.log("Parsed mapping - transaction count:", mapping.transactions?.length || 0);
+    if (mapping.transactions && mapping.transactions.length > 0) {
+      console.log("First transaction:", JSON.stringify(mapping.transactions[0]));
+      console.log("Last transaction:", JSON.stringify(mapping.transactions[mapping.transactions.length - 1]));
+    }
     
     // Validate PDF extraction
     if (isPDF) {
