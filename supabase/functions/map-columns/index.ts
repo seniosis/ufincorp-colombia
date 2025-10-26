@@ -33,37 +33,60 @@ serve(async (req) => {
     if (isPDF && isDropi) {
       systemPrompt = `You are an expert at analyzing Dropi bank statement PDFs. Extract ALL transactions from this Dropi statement.
       
-      The format is typically:
-      FECHA | TRANSACCIÓN/DESCRIPCIÓN | TIPO DE OPERACIÓN/TIPO | ESTADO | VALOR/MONTO | SALDO
+      The Dropi PDF has a table with these columns:
+      - FECHA: Date in DD/MM/YYYY format (e.g., 01/09/2025)
+      - TRANSACCIÓN or DESCRIPCIÓN: Transaction description (e.g., "Compra comercio FACEBK *ZRC8RX8NJ2" or "Recarga topup -")
+      - TIPO DE OPERACIÓN or TIPO: Either "Débito" (expense) or "Crédito" (income)
+      - ESTADO DE LA OPERACIÓN or ESTADO: Transaction status (usually "Aprobada")
+      - VALOR or MONTO: Amount with $ sign and commas (e.g., -$1,697,818.41 or $2,000,000.00)
+      - SALDO or SALDOS: Account balance after transaction
       
-      Important rules:
-      - Dates are in DD/MM/YYYY format, convert to YYYY-MM-DD
-      - "Débito" means expense (tipo: "out")
-      - "Crédito" means income (tipo: "in")
-      - Remove $ and commas from amounts
-      - Currency is always COP
-      - Negative amounts mean "out", positive mean "in"
+      CRITICAL parsing rules:
+      1. DATES: Convert DD/MM/YYYY to YYYY-MM-DD format
+         - Example: "01/09/2025" becomes "2025-09-01"
+         - Example: "15/08/2025" becomes "2025-08-15"
       
-      Return in this exact format:
+      2. AMOUNTS: 
+         - Remove "$" and "," from amounts
+         - Remove the minus sign from negative amounts
+         - Store as positive number in "monto_original"
+         - The sign indicates transaction type, not the amount itself
+      
+      3. TRANSACTION TYPE:
+         - If "TIPO DE OPERACIÓN" is "Débito" OR amount starts with minus (-), set tipo: "out"
+         - If "TIPO DE OPERACIÓN" is "Crédito" OR amount is positive, set tipo: "in"
+      
+      4. DESCRIPTION: Use the full transaction description from "TRANSACCIÓN" column
+      
+      5. CURRENCY: Always "COP" for Dropi transactions
+      
+      Examples:
+      Input: | 01/09/2025 | Compra comercio FACEBK *ZRC8RX8NJ2 | Débito | Aprobada | -$1,697,818.41 | $6,751,818.80 |
+      Output: {"fecha": "2025-09-01", "descripcion": "Compra comercio FACEBK *ZRC8RX8NJ2", "monto_original": 1697818.41, "moneda": "COP", "tipo": "out", "saldo": 6751818.80}
+      
+      Input: | 04/09/2025 | Recarga topup - | Crédito | Aprobada | $2,000,000.00 | $8,516,701.63 |
+      Output: {"fecha": "2025-09-04", "descripcion": "Recarga topup -", "monto_original": 2000000.00, "moneda": "COP", "tipo": "in", "saldo": 8516701.63}
+      
+      Return in this exact JSON format:
       {
         "detectedFormat": "dropi_pdf",
         "sourceType": "dropi",
         "transactions": [
           {
             "fecha": "YYYY-MM-DD",
-            "descripcion": "transaction description",
-            "monto_original": number (always positive),
+            "descripcion": "full transaction description",
+            "monto_original": positive_number,
             "moneda": "COP",
             "tipo": "in" or "out",
-            "saldo": number (optional)
+            "saldo": positive_number
           }
         ],
-        "cardNumber": "last 4 digits if found",
-        "period": "period if found",
+        "cardNumber": "last 4 digits if found in PDF",
+        "period": "month/year if found",
         "confidence": 0.95
       }
       
-      CRITICAL: Return ONLY valid JSON, no markdown formatting.`;
+      CRITICAL: Return ONLY valid JSON, no markdown formatting, no code blocks.`;
     } else if (isPDF) {
       systemPrompt = `You are an expert at analyzing bank statement PDFs. Extract transactions from this bank statement and return a JSON response.
       
