@@ -71,18 +71,44 @@ export const FileUpload = () => {
       // Read file as text
       const text = await file.text();
 
-      // Step 1: Map columns using AI (with timeout)
-      toast({
-        title: "Analizando archivo...",
-        description: "Esto puede tomar hasta 30 segundos para PDFs grandes",
-      });
+      // Step 1: For Dropi PDFs, use deterministic parser (no AI)
+      const isDropiPDF = text.toLowerCase().includes('dropi') || 
+                         text.toLowerCase().includes('recarga topup') ||
+                         text.toLowerCase().includes('movimientos y transacciones');
+      
+      let mappingData, mappingError;
+      
+      if (isDropiPDF && file.name.toLowerCase().endsWith('.pdf')) {
+        toast({
+          title: "Analizando extracto de Dropi...",
+          description: "Extrayendo transacciones de forma precisa",
+        });
 
-      const { data: mappingData, error: mappingError } = await supabase.functions.invoke("map-columns", {
-        body: {
-          fileContent: text,
-          fileName: file.name,
-        },
-      });
+        const response = await supabase.functions.invoke("parse-dropi-pdf", {
+          body: {
+            fileContent: text,
+            fileName: file.name,
+          },
+        });
+        
+        mappingData = response.data;
+        mappingError = response.error;
+      } else {
+        toast({
+          title: "Analizando archivo...",
+          description: "Esto puede tomar hasta 30 segundos para PDFs grandes",
+        });
+
+        const response = await supabase.functions.invoke("map-columns", {
+          body: {
+            fileContent: text,
+            fileName: file.name,
+          },
+        });
+        
+        mappingData = response.data;
+        mappingError = response.error;
+      }
 
       if (mappingError) {
         console.error("Mapping error:", mappingError);
